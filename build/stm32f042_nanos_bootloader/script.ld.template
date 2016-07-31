@@ -1,0 +1,175 @@
+/**
+ * Global chip memory layout and constants
+ *
+ */
+
+MEMORY
+{
+  FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 32K
+  SRAM (rwx) : ORIGIN = 0x20000000, LENGTH = 6K
+}
+
+PAGE_SIZE  = 1024;
+STACK_SIZE = 1024;
+END_STACK  = ORIGIN(SRAM) + LENGTH(SRAM);
+UNSEC_SIGNATURE_PADDED_MAX_LENGTH = 72;
+
+SECTIONS
+{
+  
+  /****************************************************************/
+  /* This section locates the code in FLASH                       */
+  /****************************************************************/
+  .text_bl :
+  {
+    _signed = .;
+    PROVIDE(_signed = .);
+  } > FLASH = 0xFF
+
+  /** put text in Flash memory, VMA will be equal to LMA */
+  .text :
+  {
+    /* provide start code symbol, shall be zero */
+    _text = .;
+    PROVIDE(_text = .);
+
+    KEEP(*(.bootsector_isr))
+    KEEP(*(.bootsector_entry))
+    KEEP(*(.bootsector_handler))
+
+    . = ALIGN(PAGE_SIZE);
+    /* can be modified, therefore on a page boundary */
+    _bs_nvram = .;
+    PROVIDE(_bs_nvram = .);
+    KEEP(*(.bootsector_nvram))
+
+    /* align entry on a page, can be modified by a bootloader upgrade */
+    . = ALIGN(PAGE_SIZE);
+    _bltext = .;
+    PROVIDE(_bltext = .);
+    KEEP(*(.entry))
+    KEEP(*(.isr))
+
+    /* place the other code and rodata defined BUT nvram variables that are displaced in a r/w area */
+    *(.text*)
+    *(.rodata*)
+
+    . = ALIGN(4);
+    
+    /* all code placed */
+    _etext = .;
+    PROVIDE(_etext = .);
+  } > FLASH = 0x00
+ /* we flush the output section .text in FLASH, wihtout any other
+  * specifications it is placed at addresse 0
+  */
+
+  .bss_bootsector (NOLOAD) :
+  {
+    *(.bootsector_ram)
+  } > SRAM
+
+
+  /****************************************************************/
+  /* This section locates the data/bss in RAM                     */
+  /****************************************************************/
+  /* here, as we flush in RAM, VMA will be equals to <...> (see MEMORY)
+    * we need to specify a different LMA address in FLASH to set default value
+    * of .data. The LMA is automatic, with AT> keyword. .data will be loaded
+    * just afer the code, ie after the output section .text
+    * The startup  code will need to copy values from code (accessed via etext VMA) to data
+    * VMA: this done by copying dom _etext to _data until _edata
+    */
+  .data :
+  {
+    
+    /**
+     * Place RAM initialized variables
+     */
+    _data = .;
+    PROVIDE(_data = .);
+
+    *(vtable)
+    *(.data*)
+
+    *(.ramfunc*)
+
+    . = ALIGN(4); 
+    _edata = .;
+    PROVIDE(_edata = .);
+
+  } > SRAM AT>FLASH = 0x00
+
+  .app (NOLOAD) :
+  {
+    PROVIDE(_ecode = .);
+    . = ALIGN(PAGE_SIZE);
+    _apptext = .;
+    PROVIDE(_apptext = .);
+  } > FLASH
+
+  .bss (NOLOAD) :
+  {
+    /**
+     * Place RAM uninitialized variables
+     */
+    _bss = .;
+
+    *(.bss*)
+    _ebss = .;
+
+
+    /**
+     * Reserve stack size
+     */
+    _stack = .;
+    . = _stack + STACK_SIZE;
+    PROVIDE( _stack_size = STACK_SIZE );
+    PROVIDE( _estack = ABSOLUTE(END_STACK) );
+
+  } > SRAM
+
+  /* remove the debugging information from the standard libraries */
+  DISCARD (NOLOAD) :
+  {
+    libc.a ( * )
+    libm.a ( * )
+    libgcc.a ( * )
+    *(.ARM.exidx* .gnu.linkonce.armexidx.*)
+  }
+
+  /* Stabs debugging sections.  */
+  .stab          0 : { *(.stab) }
+  .stabstr       0 : { *(.stabstr) }
+  .stab.excl     0 : { *(.stab.excl) }
+  .stab.exclstr  0 : { *(.stab.exclstr) }
+  .stab.index    0 : { *(.stab.index) }
+  .stab.indexstr 0 : { *(.stab.indexstr) }
+  .comment       0 : { *(.comment) }
+  /* DWARF debug sections.
+      Symbols in the DWARF debugging sections are relative to the beginning
+      of the section so we begin them at 0.  */
+  /* DWARF 1 */
+  .debug          0 : { *(.debug) }
+  .line           0 : { *(.line) }
+  /* GNU DWARF 1 extensions */
+  .debug_srcinfo  0 : { *(.debug_srcinfo) }
+  .debug_sfnames  0 : { *(.debug_sfnames) }
+  /* DWARF 1.1 and DWARF 2 */
+  .debug_aranges  0 : { *(.debug_aranges) }
+  .debug_pubnames 0 : { *(.debug_pubnames) }
+  /* DWARF 2 */
+  .debug_info     0 : { *(.debug_info .gnu.linkonce.wi.*) }
+  .debug_abbrev   0 : { *(.debug_abbrev) }
+  .debug_line     0 : { *(.debug_line) }
+  .debug_frame    0 : { *(.debug_frame) }
+  .debug_str      0 : { *(.debug_str) }
+  .debug_loc      0 : { *(.debug_loc) }
+  .debug_macinfo  0 : { *(.debug_macinfo) }
+  /* SGI/MIPS DWARF 2 extensions */
+  .debug_weaknames 0 : { *(.debug_weaknames) }
+  .debug_funcnames 0 : { *(.debug_funcnames) }
+  .debug_typenames 0 : { *(.debug_typenames) }
+  .debug_varnames  0 : { *(.debug_varnames) }
+  
+}
