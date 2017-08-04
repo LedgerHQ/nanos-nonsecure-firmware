@@ -648,6 +648,8 @@ const bagl_font_character_t charactersOPEN_SANS_REGULAR_11PX[96] = {
 };
 
 const bagl_font_t fontOPEN_SANS_REGULAR_11PX = {
+   BAGL_FONT_OPEN_SANS_REGULAR_11px,
+   1,
    12 , /* font height in pixels   */
    9  , /* font ascent (baseline) in pixels  */
    0, /* kerning */

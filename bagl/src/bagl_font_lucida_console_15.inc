@@ -1555,6 +1555,8 @@ const bagl_font_character_t charactersLUCIDA_CONSOLE_15[192] = {
 };
 
 const bagl_font_t fontLUCIDA_CONSOLE_15 = {
+	 BAGL_FONT_LUCIDA_CONSOLE_15PX,
+   1,
    15 , /* font height in pixels   */
    12 , /* baseline distance from top */
    0, /* kerning */

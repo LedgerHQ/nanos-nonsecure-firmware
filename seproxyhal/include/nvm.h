@@ -21,7 +21,7 @@
 #ifdef NVM_PAGE_SIZE_B
 extern unsigned char nvm_page_D [NVM_PAGE_SIZE_B];
 void nvm_write_init(void);
-void nvm_write(void * dst_adr, void* src_adr, unsigned short src_len);
+void nvm_write(void * dst_adr, void* src_adr, unsigned int src_len);
 void nvm_write_flush(void);
 #endif // NVM_PAGE_SIZE_B
 

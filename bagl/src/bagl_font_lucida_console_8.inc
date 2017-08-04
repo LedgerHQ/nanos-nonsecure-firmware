@@ -1170,6 +1170,8 @@ const bagl_font_character_t charactersLUCIDA_CONSOLE_6PT_8H[664] = {
 };
 
 const bagl_font_t fontLUCIDA_CONSOLE_8 = {
+	 BAGL_FONT_LUCIDA_CONSOLE_8PX,
+   1,
    8 , /* font height in pixels   */
    16 , /* baseline distance from top */
    0, /* kerning */

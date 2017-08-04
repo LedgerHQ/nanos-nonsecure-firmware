@@ -852,6 +852,8 @@ const bagl_font_character_t charactersOPEN_SANS_BOLD_21PX[96] = {
 };
 
 const bagl_font_t fontOPEN_SANS_BOLD_21PX = {
+   BAGL_FONT_OPEN_SANS_BOLD_21PX,
+   1,
    21 , /* font height in pixels   */
    15 , /* font ascent (baseline) in pixels  */
    0, /* kerning */

@@ -22,11 +22,13 @@ DATE        := $(shell date "+%d %B %G")
 
 #set this variable with the APP_ADDRESS of the from bootloader address.
 # = ALIGN(FLASHPAGE, MAX( lastaddr(old bl) , lastaddr(new bl) ) )
-#UPGRADE_BL_LOAD_ADDRESS := 0x08003000
+ifneq ($(BLUP),)
+UPGRADE_BL_LOAD_ADDRESS := 0x08003000
+endif
 
 BOOTLOADER  := ../stm32f042_nanos_bootloader
 #VERSION     := $(shell date "+%Y%m%d")
-VERSION     := 1.0
+VERSION     := 1.1
 
 #extract data from the used bootloader we're using to load this code
 LOAD_ADDRESS := $(shell cat $(BOOTLOADER)/debug/token.map | grep "_apptext" | grep 0x | tr -s ' '| cut -f2 -d' ' |head -n1)
@@ -68,9 +70,11 @@ DEFINES += HAVE_SEPROXYHAL
 DEFINES += HAVE_GLO091
 DEFINES += HAVE_BAGL BAGL_WIDTH=128 BAGL_HEIGHT=32
 DEFINES += HAVE_BAGL_FONT_OPEN_SANS_REGULAR_11PX
+ifeq ($(filter HAVE_SE_PERSO,$(DEFINES)),)
 DEFINES += HAVE_BAGL_FONT_OPEN_SANS_EXTRABOLD_11PX HAVE_BAGL_FONT_OPEN_SANS_LIGHT_16PX
 # Disable GLYPH when building HAVE_SE_PERSO
 DEFINES += HAVE_BAGL_GLYPH_ICON_CHECK HAVE_BAGL_GLYPH_ICON_CROSS HAVE_BAGL_GLYPH_ICON_CHECK_BADGE HAVE_BAGL_GLYPH_ICON_LEFT HAVE_BAGL_GLYPH_ICON_RIGHT HAVE_BAGL_GLYPH_ICON_UP HAVE_BAGL_GLYPH_ICON_DOWN HAVE_BAGL_GLYPH_LOGO_LEDGER_MINI HAVE_BAGL_GLYPH_ICON_CROSS_BADGE HAVE_BAGL_GLYPH_ICON_DASHBOARD_BADGE HAVE_BAGL_GLYPH_ICON_PLUS HAVE_BAGL_GLYPH_ICON_LESS HAVE_BAGL_GLYPH_ICON_TOGGLE_ON HAVE_BAGL_GLYPH_ICON_TOGGLE_OFF HAVE_BAGL_GLYPH_ICON_LOADING_BADGE HAVE_BAGL_GLYPH_ICON_COG_BADGE HAVE_BAGL_GLYPH_ICON_WARNING_BADGE HAVE_BAGL_GLYPH_ICON_DOWNLOAD_BADGE HAVE_BAGL_GLYPH_ICON_TRANSACTION_BADGE HAVE_BAGL_GLYPH_ICON_BITCOIN_BADGE HAVE_BAGL_GLYPH_ICON_ETHEREUM_BADGE HAVE_BAGL_GLYPH_ICON_EYE_BADGE HAVE_BAGL_GLYPH_ICON_LOCK_BADGE HAVE_BAGL_GLYPH_ICON_PEOPLE_BADGE
+endif
 
 #DEFINES += HAVE_64128M
 #DEFINES += HAVE_PT035HV SCREEN_TEST_AT_BOOT
@@ -96,9 +100,9 @@ ifneq ($(UPGRADE_BL_LOAD_ADDRESS),)
 
 
 # insert in the dependency chain
-dep/%.d: src/upgrade_content.bytes
+%.c: src/upgrade_content.bytes
 
-src/upgrade_content.bytes: $(BOOTLOADER)/bin/token-upgrade.hex makefiles-depends
+src/upgrade_content.bytes: prepare $(BOOTLOADER)/bin/token-upgrade.hex makefiles-depends
 	# generate erase value for data between bootloader and the loaded code
 	# order of addresses depends on which one is the bigger/smaller code to patch
 	$(call log,srec_cat -Output -Intel $(BOOTLOADER)/bin/token-upgrade.hex -Intel -generate -maximum-addr $(BOOTLOADER)/bin/token-upgrade.hex -Intel $(UPGRADE_BL_LOAD_ADDRESS) -constant 0xFF > bin/temp_bl_upgrade.hex)
@@ -137,7 +141,9 @@ VPATH := $(dir $(SOURCE_FILES))
 OBJECT_FILES := $(sort $(addprefix obj/, $(addsuffix .o, $(basename $(notdir $(SOURCE_FILES))))))
 DEPEND_FILES := $(sort $(addprefix dep/, $(addsuffix .d, $(basename $(notdir $(SOURCE_FILES))))))
 
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
 -include $(DEPEND_FILES)
+endif
 
 clean:
 	rm -fr obj bin debug dep

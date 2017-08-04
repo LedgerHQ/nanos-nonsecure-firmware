@@ -168,8 +168,12 @@ const uint8_t const USBD_LangIDDesc[USB_LEN_LANGID_STR_DESC]=
 
 const uint8_t const USB_SERIAL_STRING[] =
 {
-  0x2,      
-  USB_DESC_TYPE_STRING,    
+  4*2+2,      
+  USB_DESC_TYPE_STRING,
+  '0', 0,
+  '0', 0,
+  '0', 0,
+  '1', 0,
 };
 
 const uint8_t const USBD_MANUFACTURER_STRING[] = {

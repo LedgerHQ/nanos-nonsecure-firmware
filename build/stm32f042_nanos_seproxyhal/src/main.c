@@ -701,6 +701,11 @@ void main(unsigned int button_press_duration)
   G_io_button.pressed = 0;
   G_io_button.duration_ms = 0; 
 
+#ifdef HAVE_SE_PERSO
+  uint8_t gobackbootloader_tried = 0;
+#endif // HAVE_SE_PERSO
+
+
   #ifndef ARM_CORE_HAS_VTOR
   G_bootsector.VTOR = &g_pfnVectors;
   #else
@@ -772,8 +777,6 @@ void main(unsigned int button_press_duration)
 #else // BOOTLOADER_UPGRADE
 
 #ifndef TESTLONGLABEL
-  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 2, 0);
-  HAL_NVIC_SetPriority(USART1_IRQn, 0, 0); // avoid overrun error on the SE iso link when receiving
 
   // initialize the button press duration
   // button_it configuration for press delay determination
@@ -788,6 +791,9 @@ void main(unsigned int button_press_duration)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
+  
+  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 2, 0);
+  HAL_NVIC_SetPriority(USART1_IRQn, 0, 0); // avoid overrun error on the SE iso link when receiving
 #endif // TESTLONGLABEL
 
   __asm("cpsie i");
@@ -795,12 +801,19 @@ void main(unsigned int button_press_duration)
   G_io_seproxyhal_ticker_current_ms = 0;
   G_io_seproxyhal_ticker_enabled = 0;
 
+
+retry:
+
   // initialize screen session and charge pump, but no display yet
   screen_init(0);
 
-  
+#ifdef HAVE_SE_PERSO
+  screen_invert(1);
+  screen_brightness(100); // default brightness until otherwise changed
+#else
   screen_invert(0);
   screen_brightness(20); // default brightness until otherwise changed
+#endif
   // only clear the screen
   main_setup_screen_rotation(0);
   //screen_clear();//will be done by the SE
@@ -820,14 +833,24 @@ void main(unsigned int button_press_duration)
 
   G_seproxyhal_event_timeout_enable = 0;
 
+#ifndef HAVE_SE_PERSO
   // let the bootloader screen for awhile
   HAL_Delay(500);
+#endif // HAVE_SE_PERSO
 
   G_io_apdu_protocol_enabled = 0;
 
   //clock_config();
 
   PRINTF("Power up ST31\n");
+
+#ifdef HAVE_SE_FLASHBACK
+  extern unsigned char SE_iso_power_internal(unsigned char powered, unsigned char st_flashback);
+  SE_iso_power_internal(1, 1);
+
+  // won't go further with flashback :)
+  return;
+#endif // HAVE_SE_FLASHBACK
 
 #ifndef TESTLONGLABEL
   // USART test with hsi clock
@@ -881,14 +904,62 @@ void main(unsigned int button_press_duration)
 
 #ifdef HAVE_SE_PERSO
   PRINTF("ATR: %.*H\n", 20, G_io_se_atr);
+  unsigned int st_bootloadermode = 0;
 
   // ATR for ST31 Ledger BL/BOLOS
-  if (G_io_se_atr_length != 5) {   
+  // always enable the prober to get the ATR to avoid bootloop // if (G_io_se_atr_length != 5) 
+  {
     unsigned int boot_mode_sent = 0;
 
-    const bagl_element_t elmt = {{BAGL_LABEL                         , 0x00,    0, 10,  128,  0, 10, 0, 0, 1, 0, BAGL_FONT_OPEN_SANS_REGULAR_11px|BAGL_FONT_ALIGNMENT_CENTER, 0 }, "SE PERSO MODE" };
+    const bagl_element_t elmt = {{BAGL_LABEL                         , 0x00,    0, 10,  128,  0, 10, 0, 0, 1, 0, BAGL_FONT_OPEN_SANS_REGULAR_11px|BAGL_FONT_ALIGNMENT_CENTER, 0 }, NULL };
+    const bagl_element_t elmt_already = {{BAGL_LABEL                         , 0x00,    0, 10,  128,  0, 10, 0, 0, 1, 0, BAGL_FONT_OPEN_SANS_REGULAR_11px|BAGL_FONT_ALIGNMENT_CENTER, 0 }, NULL };
 
-    bagl_draw_with_context(&elmt, elmt.text, strlen(elmt.text), BAGL_ENCODING_LATIN1);
+    if (G_io_se_atr_length != 5 && G_io_se_atr_length > 0) {
+      snprintf(G_io_seproxyhal_buffer, 32, "SE PERSO %.*H", MIN(4, G_io_se_atr_length), G_io_se_atr);
+      //bagl_draw_with_context(&elmt, "SE PERSO", strlen("SE PERSO"), BAGL_ENCODING_LATIN1);
+      bagl_draw_string(BAGL_FONT_OPEN_SANS_REGULAR_11px, 1, 0, 10, 10, 128, 32, G_io_seproxyhal_buffer, strlen(G_io_seproxyhal_buffer), BAGL_ENCODING_LATIN1);
+      st_bootloadermode = 1;
+    }
+    else {
+      snprintf(G_io_seproxyhal_buffer, 32, "SE PERSO %.*H", MIN(4, G_io_se_atr_length), G_io_se_atr);
+      //bagl_draw_with_context(&elmt, "SE PERSO", strlen("SE PERSO"), BAGL_ENCODING_LATIN1);
+      bagl_draw_string(BAGL_FONT_OPEN_SANS_REGULAR_11px, 1, 0, 10, 10, 128, 32, G_io_seproxyhal_buffer, strlen(G_io_seproxyhal_buffer), BAGL_ENCODING_LATIN1);
+
+      if (! gobackbootloader_tried) {
+        // perform flashback
+        // session start the SE
+        G_io_seproxyhal_buffer[0] = SEPROXYHAL_TAG_SESSION_START_EVENT;
+        G_io_seproxyhal_buffer[1] = 0;
+        G_io_seproxyhal_buffer[2] = 1+4+1+sizeof(VERSION);
+
+
+        // flash back request
+        G_io_seproxyhal_buffer[3] = 4;
+
+        // compute the feature flags
+        unsigned int features = 0;
+        G_io_seproxyhal_buffer[4] = (features>>24);
+        G_io_seproxyhal_buffer[5] = (features>>16);
+        G_io_seproxyhal_buffer[6] = (features>>8);
+        G_io_seproxyhal_buffer[7] = (features>>0);
+
+        // version
+        G_io_seproxyhal_buffer[8] = sizeof(VERSION);
+        memcpy(G_io_seproxyhal_buffer+8+1, VERSION, sizeof(VERSION));
+
+        io_seproxyhal_send_start(G_io_seproxyhal_buffer, 3+1+4+1+sizeof(VERSION));
+        G_io_seproxyhal_state = WAIT_COMMAND;
+
+
+        HAL_Delay(200);
+
+        SE_iso_power(0);
+
+        // avoid looping 
+        gobackbootloader_tried = 1;
+        goto retry;
+      }
+    }
     screen_update();
 
 
@@ -1009,6 +1080,27 @@ void main(unsigned int button_press_duration)
 
         backlight_enable(1);
 
+        // get atr
+        if (G_io_apdu_buffer[0] == 0xFE
+          && G_io_apdu_buffer[1] == 0x00
+          && G_io_apdu_buffer[2] == 0x00
+          && G_io_apdu_buffer[3] == 0x00) {
+          memcpy(G_io_apdu_buffer, G_io_se_atr, G_io_se_atr_length);
+          G_io_apdu_buffer[G_io_se_atr_length] = 0x90;
+          G_io_apdu_buffer[G_io_se_atr_length+1] = 0x00;
+          io_exchange(CHANNEL_APDU|IO_RETURN_AFTER_TX, G_io_se_atr_length+2);
+          continue;
+        }
+
+        // go back bootloader
+        if (G_io_apdu_buffer[0] == 0xFE
+          && G_io_apdu_buffer[1] == 0x01
+          && G_io_apdu_buffer[2] == 0x00
+          && G_io_apdu_buffer[3] == 0x00) {
+          // return bootloader
+          return;
+        }
+
         // special reset command
         if (G_io_apdu_buffer[0] == 0xFE
           && G_io_apdu_buffer[1] == 0xFE
@@ -1044,66 +1136,6 @@ void main(unsigned int button_press_duration)
 
     // reset the chip and go back bootloader
     return;
-  }
-  else {
-    /*
-    const bagl_element_t elmt = {{BAGL_LABEL                         , 0x00,    0, 10,  128,   32, 0, 0, 0, 1, 0, BAGL_FONT_OPEN_SANS_REGULAR_11px|BAGL_FONT_ALIGNMENT_CENTER, 0 }, "PRESS RECOVERY TO FLASHBACK" };
-
-    bagl_draw_with_context(&elmt, elmt.text, strlen(elmt.text), BAGL_ENCODING_LATIN1);
-    screen_update();
-
-    G_io_button.duration_ms = 0;
-    G_io_button.displayed_mode = 0;
-    G_io_button.pressed = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7)?0:1) | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15)?0:2); // fake pressed (booting means pressed)
-    while(1) {
-
-      if ((G_io_button.pressed == 1) && G_io_button.duration_ms >= BUTTON_PRESS_DURATION_BOOT_SE_RECOVERY && !(G_io_button.displayed_mode & MODE_SE_RECOVERY) ) 
-      */
-      {
-        // perform flashback
-        // session start the SE
-        G_io_seproxyhal_buffer[0] = SEPROXYHAL_TAG_SESSION_START_EVENT;
-        G_io_seproxyhal_buffer[1] = 0;
-        G_io_seproxyhal_buffer[2] = 1+4+1+sizeof(VERSION);
-
-        // flash back request
-        G_io_seproxyhal_buffer[3] = 4;
-
-        // compute the feature flags
-        unsigned int features = 0;
-        G_io_seproxyhal_buffer[4] = (features>>24);
-        G_io_seproxyhal_buffer[5] = (features>>16);
-        G_io_seproxyhal_buffer[6] = (features>>8);
-        G_io_seproxyhal_buffer[7] = (features>>0);
-
-        // version
-        G_io_seproxyhal_buffer[8] = sizeof(VERSION);
-        memcpy(G_io_seproxyhal_buffer+8+1, VERSION, sizeof(VERSION));
-
-        io_seproxyhal_send_start(G_io_seproxyhal_buffer, 3+1+4+1+sizeof(VERSION));
-        G_io_seproxyhal_state = WAIT_COMMAND;
-
-
-        HAL_Delay(200);
-
-        // go back se perso mode
-        NVIC_SystemReset();
-
-      }
-
-
-      /*
-      // too long, sorry
-      if (G_io_button.pressed != 0 && G_io_button.duration_ms >= BUTTON_PRESS_DURATION_BOOT_POWER_OFF && !(G_io_button.displayed_mode & MODE_POWER_OFF) ) {
-        //pre_harakiri();
-        G_io_button.displayed_mode |= MODE_POWER_OFF;
-      }
-      */
-      /*
-    update_pressed:
-      G_io_button.pressed = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7)?0:1) | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15)?0:2); // fake pressed (booting means pressed)
-    }
-    */
   }
 
 
@@ -1156,7 +1188,11 @@ void main(unsigned int button_press_duration)
 
   // we can't talk to the st loader in seproxyhal dialect
   if (G_io_se_atr_length != 5) {   
+#ifdef EMU_MODE
+    return; // avoid loop, go back to bootloader, the SE seems to be non responsive
+#else
     NVIC_SystemReset();
+#endif 
   }
 
   // Small delay for baudrate to be taken into account in the SE
@@ -1258,6 +1294,9 @@ void main(unsigned int button_press_duration)
 		  
           switch(G_io_seproxyhal_buffer[0]) {
             default:
+              // invalid protocol, kthx, debug only ?
+              NVIC_SystemReset();
+              
               #ifdef DEBUG_BUTTON_LINK_DEBUG
               if (G_io_button.link_debug) {
                 screen_printf("unexpected tlv: %.*H\n", MIN(l+3, 256), G_io_seproxyhal_buffer);
@@ -1731,9 +1770,6 @@ void main(unsigned int button_press_duration)
             break;
 #endif // HAVE_BLE
 
-          case SEPROXYHAL_TAG_SCREEN_POWER:
-            // TODO PWN off
-            break;
           case SEPROXYHAL_TAG_MORE_TIME:
             // TODO add watchdog time
             break;
@@ -1818,8 +1854,10 @@ void main(unsigned int button_press_duration)
             bagl_draw_with_context(&surrounding_color_rect4, NULL, 0, BAGL_ENCODING_LATIN1);
             */
 
+            /*
             // screen debug only, else it blinks a bit too much
-            //screen_update();
+            screen_update();
+            */
 
           #ifdef ASYNCH_DISPLAY_PROCESSED_EVENT
             __asm("cpsid i");
@@ -2052,7 +2090,7 @@ void io_seproxyhal_send_start(unsigned char * buffer, unsigned short length) {
   // reset command timeout detection
   G_seproxyhal_event_timeout = 0;
   G_seproxyhal_event_timeout_enable = 1;
-  memmove(G_seproxyhal_event_timeout_header, buffer, 3);
+  memcpy(G_seproxyhal_event_timeout_header, buffer, 3);
 #ifdef DEBUG_BUTTON_LINK_DEBUG
   if (G_io_button.link_debug >= 2) {
     screen_printf("> %.*H\n", MIN(length, 256), buffer);

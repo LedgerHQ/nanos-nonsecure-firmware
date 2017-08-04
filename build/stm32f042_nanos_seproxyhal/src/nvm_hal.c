@@ -50,4 +50,3 @@ void nvm_write_flush(void) {
 }
 
 #endif // NVM_PAGE_SIZE_B
-

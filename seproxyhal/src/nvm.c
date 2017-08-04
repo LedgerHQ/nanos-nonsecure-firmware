@@ -40,7 +40,7 @@ static void nvm_write_page_load(const unsigned char* page, unsigned int load_con
   }  
 }
 
-void nvm_write(void * dst_adr, void* src_adr, unsigned short src_len) {
+void nvm_write(void * dst_adr, void* src_adr, unsigned int src_len) {
 #define DST_ADR ((const unsigned char*) dst_adr)
 #define SRC_ADR ((const unsigned char*) src_adr)
   const unsigned char* page;

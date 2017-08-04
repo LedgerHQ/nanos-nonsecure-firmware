@@ -27,19 +27,19 @@ extern unsigned int frequency_hz;
 extern volatile unsigned char G_io_seproxyhal_buffer[IO_SEPROXYHAL_BUFFER_SIZE_B];
 extern volatile unsigned int G_io_seproxyhal_events;
 
-#define SEPROXYHAL_EVENT_WATCHDOG                       0x001UL
-#define SEPROXYHAL_EVENT_TOUCH                          0x002UL
-#define SEPROXYHAL_EVENT_BLE_WRITE                      0x004UL
-#define SEPROXYHAL_EVENT_BLE_READ                       0x008UL
-#define SEPROXYHAL_EVENT_USB_XFER_IN                    0x010UL
-#define SEPROXYHAL_EVENT_USB_SETUP                      0x020UL
-#define SEPROXYHAL_EVENT_BLE_NOTIFIFICATION_REGISTER    0x040UL
-#define SEPROXYHAL_EVENT_BLE_NOTIFIFICATION_UNREGISTER  0x080UL
+#define SEPROXYHAL_EVENT_WATCHDOG                         0x1UL
+#define SEPROXYHAL_EVENT_TOUCH                            0x2UL
+#define SEPROXYHAL_EVENT_BLE_WRITE                        0x4UL
+#define SEPROXYHAL_EVENT_BLE_READ                         0x8UL
+#define SEPROXYHAL_EVENT_USB_XFER_IN                     0x10UL
+#define SEPROXYHAL_EVENT_USB_SETUP                       0x20UL
+#define SEPROXYHAL_EVENT_BLE_NOTIFIFICATION_REGISTER     0x40UL
+#define SEPROXYHAL_EVENT_BLE_NOTIFIFICATION_UNREGISTER   0x80UL
 #define SEPROXYHAL_EVENT_BLE_CONNECT                    0x100UL
 #define SEPROXYHAL_EVENT_BLE_DISCONNECT                 0x200UL
 #define SEPROXYHAL_EVENT_RELEASE                        0x400UL
 #define SEPROXYHAL_EVENT_TICKER                         0x800UL
-//#define SEPROXYHAL_EVENT_USB_OUT                       0x1000UL
+#define SEPROXYHAL_EVENT_STATUS_NOADC_REQUESTED        0x1000UL
 #define SEPROXYHAL_EVENT_USB_RESET                     0x2000UL
 #define SEPROXYHAL_EVENT_USB_SOF                       0x4000UL
 #define SEPROXYHAL_EVENT_USB_SUSPENDED                 0x8000UL
@@ -50,6 +50,8 @@ extern volatile unsigned int G_io_seproxyhal_events;
 #define SEPROXYHAL_EVENT_UNSEC_CHUNK                 0x100000UL
 #define SEPROXYHAL_EVENT_SET_LINK_SPEED              0x200000UL
 #define SEPROXYHAL_EVENT_BLE_NOTIFY_INDICATE         0x400000UL
+#define SEPROXYHAL_EVENT_STATUS_REQUESTED            0x800000UL
+#define SEPROXYHAL_EVENT_I2C                        0x1000000UL
 
 #ifdef HAVE_TOUCHPANEL
 extern volatile struct touch_state_s {
@@ -58,6 +60,10 @@ extern volatile struct touch_state_s {
   short ts_last_x2; 
   short ts_last_y2;
   short ts_last_2;
+
+#define TOUCH_EVENT_TOUCH 1
+#define TOUCH_EVENT_RELEASE 2
+  int event;
 } G_io_touch;
 #endif // HAVE_TOUCHPANEL
 
@@ -65,6 +71,9 @@ extern volatile unsigned char G_io_apdu_protocol_enabled;
 
 extern volatile unsigned char G_io_apdu_buffer[260];
 extern volatile unsigned short G_io_apdu_length;
+
+extern volatile unsigned int G_battery_mv;
+extern unsigned int G_backlight_percentage;
 
 #ifdef HAVE_BLE
 extern volatile struct ble_state_s {
@@ -147,19 +156,25 @@ unsigned int getled(void);
 
 void screen_init(unsigned char reinit);
 void screen_clear(void);
-void screen_poweroff(void);
+void screen_power(unsigned int brightness_percentage);
 void screen_update(void);
 void screen_printf(const char* format,...);
 void screen_xy(unsigned short x, unsigned short y, unsigned short rotation);
-void screen_on(void); 
+#define SCREEN_MODE_ALLON 1
+#define SCREEN_MODE_ALLOFF 0
+#define SCREEN_MODE_RAM 2
+void screen_mode(unsigned int mode);
 void screen_update_touch_event(void);
-void screen_brightness(uint8_t percentage);
+//void screen_brightness(uint8_t percentage);
 void screen_invert(unsigned int inverted);
 void screen_rotation(unsigned int degree);
 void screen_animation(unsigned int kind, unsigned char* parameters);
 unsigned int battery_get_level_mv(void);
 
 extern volatile struct usb_state_s {
+  unsigned int powered; // whether usb is enabled of not
+  unsigned int vbus_presence;
+
   // up to 32 ep manageable this way
   unsigned int  ep_in;
   unsigned int  ep_out;
@@ -242,6 +257,8 @@ extern volatile io_unsec_chunk_t G_io_unsec_chunk;
 #define REG_GET(reg, mask) (reg & mask)
 #define BB_OUT(port, pin, value) REG_SET((port)->ODR, (1<<(pin)), (value<<(pin))) 
 #define BB_IN(port, pin) REG_GET((port)->IDR, (1<<(pin)))
+
+unsigned int battery_get_level_mv(void);
 
 #endif
 

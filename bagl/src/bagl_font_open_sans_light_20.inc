@@ -1529,6 +1529,8 @@ const bagl_font_character_t charactersOPEN_SANS_LIGHT_20[192] = {
 
 
 const bagl_font_t fontOPEN_SANS_LIGHT_20 = {
+   BAGL_FONT_OPEN_SANS_LIGHT_20,
+   1,
    20 , /* font height in pixels   */
    16 , /* baseline distance from top */
    0, /* kerning */

@@ -71,7 +71,6 @@ Y axis  |   #####
 //bagl_component_t bagl_components[BAGL_COMPONENT_MAXCOUNT];
 unsigned int bagl_bgcolor;
 
-extern bagl_font_t const * C_bagl_fonts [];
 // handle the touch with release out of zone
 unsigned int last_touched_not_released_component_idx;
 
@@ -127,14 +126,44 @@ void bagl_draw_bg(unsigned int color) {
 }
 
 // --------------------------------------------------------------------------------------
+// internal helper, get the glyph entry from the glyph id (sparse glyph array support)
+const bagl_glyph_array_entry_t* bagl_get_glyph(unsigned int icon_id, const bagl_glyph_array_entry_t* glyph_array, unsigned int glyph_count) {
+  unsigned int i=glyph_count; 
+
+  while(i--) {
+    // font id match this entry (non linear)
+    if (glyph_array[i].icon_id == icon_id) {
+      return &glyph_array[i];
+    }
+  }
+
+  // id not found
+  return NULL;
+}
+
+// --------------------------------------------------------------------------------------
+// internal helper, get the font entry from the font id (sparse font array support)
+const bagl_font_t* bagl_get_font(unsigned int font_id) {
+  unsigned int i=C_bagl_fonts_count; 
+  font_id &= BAGL_FONT_ID_MASK;
+
+  while(i--) {
+    // font id match this entry (non linear)
+    if (C_bagl_fonts[i]->font_id == font_id) {
+      return C_bagl_fonts[i];
+    }
+  }
+
+  // id not found
+  return NULL;
+}
+
+// --------------------------------------------------------------------------------------
 // return the width of a text (first line only) for alignment processing
-unsigned short bagl_compute_line_width(unsigned short font_id, unsigned short width, void* text, unsigned char text_length, unsigned char text_encoding) {
+unsigned short bagl_compute_line_width(unsigned short font_id, unsigned short width, const void * text, unsigned char text_length, unsigned char text_encoding) {
   unsigned short xx;
-
-  font_id &= (BAGL_FONT_ID_MASK);
-
-  // check valid font
-  if (font_id >= BAGL_FONT_LAST || C_bagl_fonts[font_id] == NULL) {
+  const bagl_font_t *font = bagl_get_font(font_id);
+  if (font == NULL) {
     return 0;
   }
 
@@ -142,8 +171,6 @@ unsigned short bagl_compute_line_width(unsigned short font_id, unsigned short wi
   xx = 0;
 
   //printf("display text: %s\n", text);
-
-  unsigned char ch_kerning = C_bagl_fonts[font_id]->char_kerning;
 
   // depending on encoding
   while (text_length--) {
@@ -154,26 +181,46 @@ unsigned short bagl_compute_line_width(unsigned short font_id, unsigned short wi
       case BAGL_ENCODING_LATIN1:
         ch = *((unsigned char*)text);
         text = (void*)(((unsigned char*)text)+1);
-        if (ch < C_bagl_fonts[font_id]->first_char || ch > C_bagl_fonts[font_id]->last_char) {
-          //printf("invalid char");
-          // can't proceed
-          // but return up to the invalid char
-          return xx;
-        }
-        ch -= C_bagl_fonts[font_id]->first_char;
         break;
     }
 
-    // retrieve the char bitmap
-    unsigned char ch_width = C_bagl_fonts[font_id]->characters[ch].char_width;
+    unsigned char ch_width = 0; 
+    unsigned char ch_kerning = 0;
+    if (ch < font->first_char || ch > font->last_char) {
+      // only proceed the first line width, not the whole paragraph
+      if (ch == '\n' || ch == '\r') {
+        return xx;
+      }
 
-    // go to next line if needed
+      // else use the low bits as an extra spacing value
+      if (ch >= 0xC0) {
+        ch_width = ch&0x3F;
+      }
+      else if (ch >= 0x80) {
+        // open the glyph font
+        const bagl_font_t *font_symbols = bagl_get_font((ch&0x20)?BAGL_FONT_SYMBOLS_1:BAGL_FONT_SYMBOLS_0);
+        if (font_symbols != NULL) {
+          // extract the size of the symbols' font character
+          ch_width = font_symbols->characters[ch & 0x1F].char_width;
+        }
+      }
+    }
+    else {
+      // compute the index in the bitmap array
+      ch -= font->first_char;
+      ch_kerning = font->char_kerning;
+      ch_width = font->characters[ch].char_width;
+    }
+
+    // retrieve the char bitmap
+
+    // go to next line if needed, kerning is not used here
     if (width > 0 && xx + ch_width > width) {
       return xx;
     }
 
     // prepare for next char
-    xx += ch_width + ch_kerning;
+    xx += ch_width;
   }
   return xx;
 }
@@ -181,17 +228,53 @@ unsigned short bagl_compute_line_width(unsigned short font_id, unsigned short wi
 // --------------------------------------------------------------------------------------
 // draw char until a char fit before reaching width
 // TODO support hyphenation ??
-int bagl_draw_string(unsigned short font_id, unsigned int fgcolor, unsigned int bgcolor, int x, int y, unsigned int width, unsigned int height, void* text, unsigned int text_length, unsigned char text_encoding) {
+int bagl_draw_string(unsigned short font_id, unsigned int fgcolor, unsigned int bgcolor, int x, int y, unsigned int width, unsigned int height, const void* text, unsigned int text_length, unsigned char text_encoding) {
   unsigned int xx;
-  unsigned int colors[2];
+  unsigned int colors[16];
   colors[0] = bgcolor;
   colors[1] = fgcolor;
 
-  font_id &= (BAGL_FONT_ID_MASK);
-
-  // check valid font
-  if (font_id >= BAGL_FONT_LAST || C_bagl_fonts[font_id] == NULL) {
+  const bagl_font_t *font = bagl_get_font(font_id);
+  if (font == NULL) {
     return 0;
+  }
+
+
+  if (font->bpp > 1) {
+    // fgcolor = 0x7e7ecc
+    // bgcolor = 0xeca529
+    // $1 = {0xeca529, 0xc6985f, 0xa28b95, 0x7e7ecc}
+
+    int color_count = 1<<(font->bpp);
+
+    memset(colors, 0, sizeof(colors));
+    colors[0] = bgcolor;
+    colors[color_count-1] = fgcolor;
+
+    // compute for all base colors
+    int off;
+    for (off = 0; off < 3; off++) {
+
+      int cfg = (fgcolor>>(off*8))&0xFF;
+      int cbg = (bgcolor>>(off*8))&0xFF;
+
+      int crange = MAX(cfg,cbg)-MIN(cfg,cbg)+1;
+      int cinc = crange/(color_count-1UL);
+
+      if (cfg > cbg) {
+        int i;
+        for (i=1; i < color_count-1UL; i++) {
+          colors[i] |= MIN(0xFF, cbg+i*cinc)<<(off*8);
+        }
+      }
+      else {
+        int i;
+
+        for (i=1; i < color_count-1UL; i++) {
+          colors[i] |= MIN(0xFF, cfg+(color_count-1-i)*cinc)<<(off*8);
+        }
+      }
+    }
   }
 
   // always comparing this way, very optimized etc
@@ -203,8 +286,6 @@ int bagl_draw_string(unsigned short font_id, unsigned int fgcolor, unsigned int 
 
   //printf("display text: %s\n", text);
 
-  unsigned char ch_height = C_bagl_fonts[font_id]->char_height;
-  unsigned char ch_kerning = C_bagl_fonts[font_id]->char_kerning;
 
   // depending on encoding
   while (text_length--) {
@@ -215,32 +296,59 @@ int bagl_draw_string(unsigned short font_id, unsigned int fgcolor, unsigned int 
       case BAGL_ENCODING_LATIN1:
         ch = *((unsigned char*)text);
         text = (void*)(((unsigned char*)text)+1);
-        if (ch < C_bagl_fonts[font_id]->first_char || ch > C_bagl_fonts[font_id]->last_char) {
-          //printf("invalid char");
-          // can't proceed
-          if (ch == '\n' || ch == '\t') {
-            y += ch_height; // no interleave
-
-            // IGNORED for first line
-            if (y + ch_height > height) {
-              // we're writing half height of the last line ... probably better to put some dashes
-              return (y<<16)|(xx&0xFFFF);
-            }
-
-            // newline starts back at first x offset
-            xx = x;
-
-            continue;
-          }
-          return (y<<16)|(xx&0xFFFF);
-        }
-        ch -= C_bagl_fonts[font_id]->first_char;
         break;
     }
 
+    unsigned char ch_height = 0;
+    unsigned char ch_kerning = 0;
+    unsigned char ch_width = 0;
+    const unsigned char * ch_bitmap = NULL;
+    int ch_y = y;
+
+    if (ch < font->first_char || ch > font->last_char) {
+      //printf("invalid char");
+      // can't proceed
+      if (ch == '\n' || ch == '\r') {
+        y += ch_height; // no interleave
+
+        // IGNORED for first line
+        if (y + ch_height > height) {
+          // we're writing half height of the last line ... probably better to put some dashes
+          return (y<<16)|(xx&0xFFFF);
+        }
+
+        // newline starts back at first x offset
+        xx = x;
+        continue;
+      }
+
+      // SKIP THE CHAR // return (y<<16)|(xx&0xFFFF);
+      ch_width = 0;
+      if (ch >= 0xC0) {
+        ch_width = ch & 0x3F;
+        ch_height = font->char_height;
+      }
+      else if (ch >= 0x80) {
+        // open the glyph font
+        const bagl_font_t *font_symbols = bagl_get_font((ch&0x20)?BAGL_FONT_SYMBOLS_1:BAGL_FONT_SYMBOLS_0);
+        if (font_symbols != NULL) {
+          ch_bitmap = &font_symbols->bitmap[font_symbols->characters[ch & 0x1F].bitmap_offset];
+          ch_width = font_symbols->characters[ch & 0x1F].char_width;
+          ch_height = font_symbols->char_height;
+          // align baselines
+          ch_y = y + font->baseline_height - font_symbols->baseline_height;
+        }
+      }
+    }
+    else {
+      ch -= font->first_char;
+      ch_bitmap = &font->bitmap[font->characters[ch].bitmap_offset];
+      ch_width = font->characters[ch].char_width;
+      ch_kerning = font->char_kerning;
+      ch_height = font->char_height;
+    }
+
     // retrieve the char bitmap
-    unsigned char const * ch_bitmap = &C_bagl_fonts[font_id]->bitmap[C_bagl_fonts[font_id]->characters[ch].bitmap_offset];
-    unsigned char ch_width = C_bagl_fonts[font_id]->characters[ch].char_width;
 
     // go to next line if needed
     if (xx + ch_width > width) {
@@ -264,7 +372,12 @@ int bagl_draw_string(unsigned short font_id, unsigned int fgcolor, unsigned int 
     */
 
     // chars are storred LSB to MSB in each char, packed chars. horizontal scan
-    bagl_hal_draw_bitmap_within_rect(xx, y, ch_width, ch_height, 2, colors, 1, ch_bitmap, ch_width*ch_height); // note, last parameter is computable could be avoided
+    if (ch_bitmap) {
+      bagl_hal_draw_bitmap_within_rect(xx, ch_y, ch_width, ch_height, (1<<font->bpp), colors, font->bpp, ch_bitmap, font->bpp*ch_width*ch_height); // note, last parameter is computable could be avoided
+    }
+    else {
+      bagl_hal_draw_rect(bgcolor, xx, ch_y, ch_width, ch_height);
+    }
     // prepare for next char
     xx += ch_width + ch_kerning;
   }
@@ -290,7 +403,7 @@ void bagl_draw_circle_helper(unsigned int color, int x_center, int y_center, uns
      8 ***** 2
 */
 
-  unsigned int last_x;
+  int last_x;
   int x = radius;
   int y = 0;
   int decisionOver2 = 1 - x;   // Decision criterion divided by 2 evaluated at x=r, y=0
@@ -404,7 +517,7 @@ void bagl_set_glyph_array(const bagl_glyph_array_entry_t* array, unsigned int co
 
 // --------------------------------------------------------------------------------------
 
-void bagl_draw_with_context(bagl_component_t* component, void* context, unsigned short context_length, unsigned char context_encoding) {
+void bagl_draw_with_context(const bagl_component_t* component, const void* context, unsigned short context_length, unsigned char context_encoding) {
   //unsigned char comp_idx;
   unsigned int halignment=0;
   unsigned int valignment=0;
@@ -412,6 +525,10 @@ void bagl_draw_with_context(bagl_component_t* component, void* context, unsigned
   unsigned int baseline=0;
   unsigned int char_height=0;
   unsigned int strwidth = 0;
+  unsigned int ellipsis_1_len = 0;
+  const char* ellipsis_2_start = NULL;
+
+  const bagl_glyph_array_entry_t* glyph=NULL;
 
   // DESIGN NOTE: always consider drawing onto a bg color filled image. (done upon undraw)
 
@@ -441,50 +558,92 @@ idx_ok:
   unsigned int type = component->type&~(BAGL_TYPE_FLAGS_MASK);
 
   // compute alignment if text provided and requiring special alignment
-  if (context && context_length && type != BAGL_ICON) {
-    baseline = C_bagl_fonts[component->font_id&BAGL_FONT_ID_MASK]->baseline_height;
-    char_height = C_bagl_fonts[component->font_id&BAGL_FONT_ID_MASK]->char_height;
-    strwidth = bagl_compute_line_width(component->font_id, component->width, context, context_length, context_encoding);
-    switch (component->font_id & BAGL_FONT_ALIGNMENT_HORIZONTAL_MASK ) {
-      default:
-      case BAGL_FONT_ALIGNMENT_LEFT:
-        halignment = 0;
-        break;
-      case BAGL_FONT_ALIGNMENT_RIGHT:
-        halignment = component->width - strwidth;
-        break;
-      case BAGL_FONT_ALIGNMENT_CENTER:
-        // x   xalign      strwidth width
-        // '     '            '     '
-        //       ^
-        // xalign = x+ (width/2) - (strwidth/2) => align -x
-        halignment = component->width/2 - strwidth/2;
-        break;
-    }
+  if (type != BAGL_ICON) {
+    bagl_font_t* font = bagl_get_font(component->font_id);
+    if (font) {
+      baseline = font->baseline_height;
+      char_height = font->char_height;
+      if (context && context_length) {
+        // compute with some margin to fit other characters and check if ellipsis algorithm is required
+        strwidth = bagl_compute_line_width(component->font_id, component->width+100, context, context_length, context_encoding);
+        ellipsis_1_len = context_length;
 
-    switch (component->font_id & BAGL_FONT_ALIGNMENT_VERTICAL_MASK ) {
-      default:
-      case BAGL_FONT_ALIGNMENT_TOP:
-        valignment = 0;
-        break;
-      case BAGL_FONT_ALIGNMENT_BOTTOM:
-        valignment = component->height - baseline;
-        break;
-      case BAGL_FONT_ALIGNMENT_MIDDLE:
-        // y                 yalign           charheight        height
-        // '                    '          v  '                 '
-        //                           baseline
-        // yalign = y+ (height/2) - (baseline/2) => align - y
-        valignment = component->height/2 - baseline/2 - 1;
-        break;
+#ifdef HAVE_BAGL_ELLIPSIS
+        // ellipsis mode (ensure something is to be splitted!)
+        if (strwidth > component->width && context_length>4) {
+          unsigned int dots_len = bagl_compute_line_width(component->font_id, 100 /*probably larger than ... whatever the font*/, "...", 3, context_encoding);
+          ellipsis_1_len = context_length/2;
+          ellipsis_2_start = (unsigned int)context + context_length/2;
+          // split line in 2 halves, strip a char from end of left part, and from start of right part, reassemble with ... , repeat until it fits.
+          // NOTE: algorithm is wrong if special blank chars are inserted, they should be removed first
+          while (strwidth > component->width && ellipsis_1_len) {
+            unsigned int left_part = bagl_compute_line_width(component->font_id, component->width, context, ellipsis_1_len, context_encoding);
+            unsigned int right_part = bagl_compute_line_width(component->font_id, component->width, ellipsis_2_start, ellipsis_1_len, context_encoding);
+            // update to check and to compute alignement if needed
+            strwidth = left_part + dots_len + right_part;
+            // only start to split if the middle char if odd context_length removal is not sufficient
+            if (strwidth > component->width) {
+              // remove a left char
+              ellipsis_1_len--;
+              // remove a right char
+              ellipsis_2_start++;
+            }
+          }
+          // we've computed split positions
+        }
+#endif // HAVE_BAGL_ELLIPSIS
+
+        switch (component->font_id & BAGL_FONT_ALIGNMENT_HORIZONTAL_MASK ) {
+          default:
+          case BAGL_FONT_ALIGNMENT_LEFT:
+            halignment = 0;
+            break;
+          case BAGL_FONT_ALIGNMENT_RIGHT:
+            halignment = component->width - strwidth;
+            break;
+          case BAGL_FONT_ALIGNMENT_CENTER:
+            // x   xalign      strwidth width
+            // '     '            '     '
+            //       ^
+            // xalign = x+ (width/2) - (strwidth/2) => align -x
+            halignment = component->width/2 - strwidth/2;
+            break;
+        }
+
+        switch (component->font_id & BAGL_FONT_ALIGNMENT_VERTICAL_MASK ) {
+          default:
+          case BAGL_FONT_ALIGNMENT_TOP:
+            valignment = 0;
+            break;
+          case BAGL_FONT_ALIGNMENT_BOTTOM:
+            valignment = component->height - baseline;
+            break;
+          case BAGL_FONT_ALIGNMENT_MIDDLE:
+            // y                 yalign           charheight        height
+            // '                    '          v  '                 '
+            //                           baseline
+            // yalign = y+ (height/2) - (baseline/2) => align - y
+            valignment = component->height/2 - baseline/2 - 1;
+            break;
+        }
+      }
     }
   }
 
   // only check the type only, ignore the touchable flag
   switch(type) {
+    /*
+        button (B)
+        <   |Icon|Space|Textstring|   >
+             I.w   W.w     T.w
+        I.x = B.x+B.w/2-(I.w+W.w+T.w)/2
+        W.x = I.x+I.w
+        T.x = W.x+W.w = I.x+I.w+W.w = B.x+B.w/2-(I.w+W.w+T.w)/2+I.w+W.w = B.x+B.w/2-T.w/2+(I.w+W.w)/2
+    */
     case BAGL_RECTANGLE:
-    case BAGL_BUTTON: // textbox + rectangle
+    case BAGL_BUTTON: // optional icon + textbox + rectangle
     draw_round_rect: {
+      unsigned int icon_width = 0;
       unsigned int radius = component->radius;
       //if (radius > component->width/2 ||radius > component->height/2) 
       {
@@ -606,25 +765,49 @@ idx_ok:
       }
 
       
+      if (component->icon_id) {
+        y = component->y;
+
+        glyph = bagl_get_glyph(component->icon_id, C_glyph_array, C_glyph_count);
+
+        // glyph doesn't exist, avoid printing random stuff from the memory
+        if (glyph) {
+          if ((component->font_id & BAGL_FONT_ALIGNMENT_HORIZONTAL_MASK) == BAGL_FONT_ALIGNMENT_CENTER) {
+            icon_width = glyph->width;
+          }
+
+          // icon_width is 0 when alignment is != CENTERED
+
+          // center glyph in rect
+          // draw the glyph from the bitmap using the context for colors
+          bagl_hal_draw_bitmap_within_rect(component->x + halignment - icon_width/2, 
+                                           y + (component->height / 2 - glyph->height / 2), // icons are always vertically centered
+                                           glyph->width, 
+                                           glyph->height, 
+                                           1<<(glyph->bits_per_pixel), 
+                                           glyph->default_colors,
+                                           glyph->bits_per_pixel, 
+                                           glyph->bitmap, 
+                                           glyph->bits_per_pixel*(glyph->width*glyph->height));
+        }
+      }
+
       // 1 textarea (reframed)
       if (context && context_length) {
+        // TODO split ? but label has not been splitted using the icon width and component stroke 
+
         bagl_draw_string(component->font_id,
                          // draw '1' pixels in bg when filled
                          (component->fill == BAGL_FILL) ? component->bgcolor:component->fgcolor, 
                          // draw '0' pixels in fg when filled
                          (component->fill == BAGL_FILL) ? component->fgcolor:component->bgcolor, 
-                         component->x + halignment, 
+                         component->x + halignment + icon_width/2, 
                          component->y + valignment, 
-                         component->width - halignment - (MAX(1,component->stroke)*2), 
+                         component->width - halignment - (MAX(1,component->stroke)*2) - icon_width/2, 
                          component->height - valignment - (MAX(1,component->stroke)*2),
                          context,
                          context_length,
                          context_encoding);
-      }
-
-      // centered by default
-      if ( component->icon_id ) {
-        goto case_BAGL_ICON;
       }
       break;
     }
@@ -634,17 +817,28 @@ idx_ok:
       // draw background rect
       if (component->fill == BAGL_FILL) 
       {
+        // before text to appear
         bagl_hal_draw_rect(component->bgcolor,  // bg here, but need some helping
                            component->x, 
                            component->y-(type==BAGL_LABELINE?(baseline):0), 
-                           component->width, 
+                           halignment, 
                            (type==BAGL_LABELINE?char_height:component->height)
                            );
+        // after text to appear
+        bagl_hal_draw_rect(component->bgcolor,  // bg here, but need some helping
+                           component->x+halignment+strwidth, 
+                           component->y-(type==BAGL_LABELINE?(baseline):0), 
+                           component->width-(halignment+strwidth), 
+                           (type==BAGL_LABELINE?char_height:component->height)
+                           );
+
+        // doesn't work for multiline :D
       }
       if (context && context_length) {
         // debug centering
         //bagl_hal_draw_rect(component->fgcolor, component->x, component->y, 2, 2);
-        bagl_draw_string(component->font_id,
+
+        unsigned int pos = bagl_draw_string(component->font_id,
                          component->fgcolor, 
                          component->bgcolor, 
                          component->x + halignment /*+ component->stroke*/, 
@@ -652,8 +846,35 @@ idx_ok:
                          component->width /*- 2*component->stroke*/ - halignment, 
                          component->height /*- 2*component->stroke*/ - (type==BAGL_LABELINE?0/*-char_height*/:valignment),
                          context,
-                         context_length,
+                         ellipsis_1_len,
                          context_encoding);
+#ifdef HAVE_BAGL_ELLIPSIS
+        if (ellipsis_2_start) {
+          // draw ellipsis
+          pos = bagl_draw_string(component->font_id,
+                                 component->fgcolor, 
+                                 component->bgcolor, 
+                                 (pos & 0xFFFF) /*+ component->stroke*/, 
+                                 component->y + (type==BAGL_LABELINE?-(baseline):valignment) /*+ component->stroke*/, 
+                                 component->width /*- 2*component->stroke*/ - halignment, 
+                                 component->height /*- 2*component->stroke*/ - (type==BAGL_LABELINE?0/*-char_height*/:valignment),
+                                 "...",
+                                 3,
+                                 context_encoding); 
+          // draw the right part
+          pos = bagl_draw_string(component->font_id,
+                                 component->fgcolor, 
+                                 component->bgcolor, 
+                                 (pos & 0xFFFF) /*+ component->stroke*/, 
+                                 component->y + (type==BAGL_LABELINE?-(baseline):valignment) /*+ component->stroke*/, 
+                                 component->width /*- 2*component->stroke*/ - halignment, 
+                                 component->height /*- 2*component->stroke*/ - (type==BAGL_LABELINE?0/*-char_height*/:valignment),
+                                 ellipsis_2_start,
+                                 ellipsis_1_len,
+                                 context_encoding);
+        }
+#endif // HAVE_BAGL_ELLIPSIS
+        
         // debug centering
         //bagl_hal_draw_rect(component->fgcolor, component->x+component->width-2, component->y+component->height-2, 2, 2);
       }
@@ -665,13 +886,11 @@ idx_ok:
       break;
 
     case BAGL_LINE: // a line is just a flat rectangle :p
-      component->fill = BAGL_FILL; // mandat !!
     //case BAGL_RECTANGLE:
-      if(component->fill == BAGL_FILL && component->radius == 0) {
+      if(/*component->fill == BAGL_FILL &&*/ component->radius == 0) {
         bagl_hal_draw_rect(component->fgcolor, component->x, component->y, component->width, component->height);
       }
       else {
-        outline_rect:
         goto draw_round_rect;
         /*
         // not filled, respect the stroke
@@ -688,34 +907,29 @@ idx_ok:
       break;
 
     case BAGL_ICON: {
-
-      bagl_glyph_array_entry_t* glyph_array;
-      unsigned int glyph_count;
-
-    case_BAGL_ICON:
       x = component->x;
       y = component->y;
 
       // icon data follows are in the context
       if (component->icon_id != 0) {
+
         // select the default or custom glyph array
         if (component->type == BAGL_ICON && context_encoding && G_glyph_array && G_glyph_count > 0) {
-          glyph_array = G_glyph_array;
-          glyph_count = G_glyph_count;
+          glyph = bagl_get_glyph(component->icon_id, G_glyph_array, G_glyph_count);
         }
         else {
-          glyph_array = C_glyph_array;
-          glyph_count = C_glyph_count;
+          glyph = bagl_get_glyph(component->icon_id, C_glyph_array, C_glyph_count);
         }
 
-        if (component->icon_id >= glyph_count) {
-          // glyph doesn't exist, avoid printing random stuff from the memory
+        // 404 glyph not found 
+        if (glyph == NULL) {
           break;
         }
 
+
         // color accounted as bytes in the context length
         if (context_length) {
-          if ((1<<glyph_array[component->icon_id].bits_per_pixel)*4 != context_length) {
+          if ((1<<glyph->bits_per_pixel)*4 != context_length) {
             // invalid color count
             break;
           }
@@ -723,21 +937,21 @@ idx_ok:
         }
         // use default colors
         if (!context_length || !context) {
-          context_length = 1<<(glyph_array[component->icon_id].bits_per_pixel);
-          context = glyph_array[component->icon_id].default_colors;
+          context_length = 1<<(glyph->bits_per_pixel);
+          context = glyph->default_colors;
         }
 
         // center glyph in rect
         // draw the glyph from the bitmap using the context for colors
-        bagl_hal_draw_bitmap_within_rect(x + (component->width / 2 - glyph_array[component->icon_id].width / 2), 
-                                         y + (component->height / 2 - glyph_array[component->icon_id].height / 2), 
-                                         glyph_array[component->icon_id].width, 
-                                         glyph_array[component->icon_id].height, 
+        bagl_hal_draw_bitmap_within_rect(x + (component->width / 2 - glyph->width / 2), 
+                                         y + (component->height / 2 - glyph->height / 2), 
+                                         glyph->width, 
+                                         glyph->height, 
                                          context_length, 
                                          (unsigned int*)context, // Endianness remarkably ignored !
-                                         glyph_array[component->icon_id].bits_per_pixel, 
-                                         glyph_array[component->icon_id].bitmap, 
-                                         glyph_array[component->icon_id].bits_per_pixel*(glyph_array[component->icon_id].width*glyph_array[component->icon_id].height));
+                                         glyph->bits_per_pixel, 
+                                         glyph->bitmap, 
+                                         glyph->bits_per_pixel*(glyph->width*glyph->height));
       }
       else {
         // context: <bitperpixel> [color_count*4 bytes (LE encoding)] <icon bitmap (raw scan, LE)>
@@ -812,9 +1026,14 @@ void bagl_animate(bagl_animated_t* anim, unsigned int timestamp_ms, unsigned int
 
   // compute alignment if text provided and requiring special alignment
   if (anim->text && anim->text_length && (type == BAGL_LABELINE || type == BAGL_LABEL)) {
+    bagl_font_t* font = bagl_get_font(anim->c.font_id);
+    // invalid font, nothing to animate :(
+    if (font == NULL) {
+      return;
+    }
     unsigned int maxcharwidth = bagl_compute_line_width(anim->c.font_id, 0, "W", 1, anim->text_encoding)+1;
-    baseline = C_bagl_fonts[anim->c.font_id&BAGL_FONT_ID_MASK]->baseline_height;
-    char_height = C_bagl_fonts[anim->c.font_id&BAGL_FONT_ID_MASK]->char_height;
+    baseline = font->baseline_height;
+    char_height = font->char_height;
     
     totalwidth = bagl_compute_line_width(anim->c.font_id, 0, anim->text, anim->text_length, anim->text_encoding);
 
@@ -938,7 +1157,7 @@ void bagl_animate(bagl_animated_t* anim, unsigned int timestamp_ms, unsigned int
 
 // --------------------------------------------------------------------------------------
 
-void bagl_draw(bagl_component_t* component) {
+void bagl_draw(const bagl_component_t* component) {
   // component without text
   bagl_draw_with_context(component, NULL, 0, 0);
 }

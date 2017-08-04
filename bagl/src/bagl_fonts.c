@@ -29,6 +29,7 @@
 #include "bagl_font_rom.inc"
 
 const bagl_font_t fontNONE = {
+	-1UL, /* last font id */
    0 , /* font height in pixels   */
    0 , /* baseline distance from top */
    0, /* kerning */
@@ -42,4 +43,8 @@ const bagl_font_t* const C_bagl_fonts[] = {
 
 #include "bagl_font_rom_struct.inc"
 
+
 };
+
+const unsigned int C_bagl_fonts_count = sizeof(C_bagl_fonts)/sizeof(C_bagl_fonts[0]);
+

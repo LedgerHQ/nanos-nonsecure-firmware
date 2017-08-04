@@ -862,6 +862,8 @@ const bagl_font_character_t charactersCOMIC_SANS_MS_20PX[96] = {
 };
 
 const bagl_font_t fontCOMIC_SANS_MS_20PX = {
+#error mapping name
+   1,
    21 , /* font height in pixels   */
    15 , /* font ascent (baseline) in pixels  */
    0, /* kerning */

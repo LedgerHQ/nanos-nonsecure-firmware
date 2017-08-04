@@ -1087,6 +1087,14 @@ static HAL_StatusTypeDef PCD_EP_ISR_Handler(PCD_HandleTypeDef *hpcd)
           /* Get SETUP Packet*/
           ep->xfer_count = PCD_GET_EP_RX_CNT(hpcd->Instance, ep->num);
           PCD_ReadPMA(hpcd->Instance, (uint8_t*)hpcd->Setup ,ep->pmaadress , ep->xfer_count);
+
+#ifdef EMU_MODE
+          // deep debug reset
+          if (hpcd->Setup[0] == 0xCC) {
+            NVIC_SystemReset();
+          }
+#endif // EMU_MODE
+
           /* SETUP bit kept frozen while CTR_RX = 1*/ 
           PCD_CLEAR_RX_EP_CTR(hpcd->Instance, PCD_ENDP0); 
           

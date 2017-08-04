@@ -783,6 +783,8 @@ const bagl_font_character_t charactersOPEN_SANS_SEMIBOLD_18PX[96] = {
 };
 
 const bagl_font_t fontOPEN_SANS_SEMIBOLD_18PX = {
+   BAGL_FONT_OPEN_SANS_SEMIBOLD_18PX,
+   1,
    18 , /* font height in pixels   */
    13 , /* font ascent (baseline) in pixels  */
    0, /* kerning */
