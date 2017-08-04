@@ -184,9 +184,11 @@ const uint8_t const USBD_MANUFACTURER_STRING[] = {
 };
 
 const uint8_t const USBD_PRODUCT_FS_STRING[] = {
-  17*2+2,
+  16*2+2,
   USB_DESC_TYPE_STRING,
-  'N', 0,
+  'L', 0, 'e', 0, 'd', 0, 'g', 0, 'e', 0, 'r', 0, ' ', 0, 'N', 0, 'a', 0, 'n', 0, 'o', 0, ' ', 0, 'S', 0, ' ', 0, 'B', 0, 'L', 0
+  /*
+  'N', 0, 
   'a', 0,
   'n', 0,
   'o', 0,
@@ -203,6 +205,7 @@ const uint8_t const USBD_PRODUCT_FS_STRING[] = {
   'd', 0,
   'e', 0,
   'r', 0,  
+  */
 };
 #define USBD_INTERFACE_FS_STRING USBD_PRODUCT_FS_STRING
 #define USBD_CONFIGURATION_FS_STRING USBD_PRODUCT_FS_STRING
